@@ -23,7 +23,7 @@ io.on('connection', (socket) => {
 // ---------------------------------------------------------
 // ⚠️ CONEXÃO SUPABASE (Verifique se sua senha está correta aqui)
 // ---------------------------------------------------------
-const connectionString = 'postgresql://postgres:d@NIELE3108198@db.qldlptsvybugttektgbe.supabase.co:5432/postgres'; 
+const connectionString = 'postgresql://postgres.qldlptsvybugttektgbe:d@NIELE3108198@aws-0-us-west-2.pooler.supabase.com:6543/postgres'; 
 
 const pool = new Pool({
     connectionString: connectionString,
