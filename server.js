@@ -35,12 +35,25 @@ app.get('/', (req, res) => {
     res.json({ mensagem: 'Servidor SaaS Online e Atualizado! 🚀' });
 });
 
-// 1. Rota Alunos
 app.get('/api/alunos', async (req, res) => {
     try {
-        const resultado = await pool.query('SELECT * FROM alunos');
+        // O segredo está aqui: JOIN (juntar) a tabela alunos com responsaveis
+        const query = `
+            SELECT 
+                alunos.id,
+                alunos.nome,
+                alunos.turma_id,
+                alunos.qr_code_hash as qr_code,
+                responsaveis.nome as nome_responsavel,
+                responsaveis.qr_code_hash as qr_pai
+            FROM alunos
+            LEFT JOIN responsaveis ON alunos.id = responsaveis.aluno_id
+        `;
+
+        const resultado = await pool.query(query);
         res.json(resultado.rows);
     } catch (erro) {
+        console.error(erro);
         res.status(500).json({ erro: 'Erro ao buscar alunos' });
     }
 });
