@@ -58,6 +58,63 @@ app.get('/api/alunos', async (req, res) => {
     }
 });
 
+// ==========================================
+// 🚨 ROTA DA PORTARIA INTELIGENTE (SCAN)
+// ==========================================
+app.post('/api/scan', async (req, res) => {
+    const { qr_code } = req.body;
+
+    if (!qr_code) {
+        return res.status(400).json({ erro: 'QR Code não fornecido' });
+    }
+
+    try {
+        // 1. Tenta achar o QR Code na tabela de ALUNOS (Sinal de ENTRADA 🟢)
+        const buscaAluno = await pool.query('SELECT * FROM alunos WHERE qr_code_hash = $1', [qr_code]);
+        
+        if (buscaAluno.rows.length > 0) {
+            const aluno = buscaAluno.rows[0];
+            
+            // Aqui futuramente podemos salvar no banco o horário da entrada
+            
+            return res.json({ 
+                status: 'sucesso', 
+                tipo: 'entrada', 
+                mensagem: `${aluno.nome} entrou na escola.`,
+                aluno: aluno.nome
+            });
+        }
+
+        // 2. Tenta achar o QR Code na tabela de RESPONSÁVEIS (Sinal de SAÍDA 🟠)
+        const buscaPai = await pool.query('SELECT * FROM responsaveis WHERE qr_code_hash = $1', [qr_code]);
+        
+        if (buscaPai.rows.length > 0) {
+            const pai = buscaPai.rows[0];
+            
+            // Vamos descobrir o nome do aluno que esse pai veio buscar para a mensagem ficar legal
+            const buscaFilho = await pool.query('SELECT nome FROM alunos WHERE id = $1', [pai.aluno_id]);
+            const nomeFilho = buscaFilho.rows[0].nome;
+
+            // Aqui futuramente podemos salvar no banco o horário da saída
+            
+            return res.json({ 
+                status: 'sucesso', 
+                tipo: 'saida', 
+                mensagem: `${pai.nome} veio buscar ${nomeFilho}. Liberação autorizada!`,
+                aluno: nomeFilho,
+                responsavel: pai.nome
+            });
+        }
+
+        // 3. Se não achou em nenhuma das duas tabelas (QR Code Inválido 🔴)
+        return res.status(404).json({ erro: 'QR Code inválido ou não cadastrado no sistema.' });
+
+    } catch (erro) {
+        console.error('Erro na portaria:', erro);
+        res.status(500).json({ erro: 'Erro interno no servidor da portaria.' });
+    }
+});
+
 // 2. Rota Registrar Acesso (Portaria Inteligente)
 app.post('/api/registrar-acesso', async (req, res) => {
     const { qr_code, tipo } = req.body; 
