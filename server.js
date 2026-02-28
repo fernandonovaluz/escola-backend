@@ -320,6 +320,60 @@ app.get('/api/planejamentos', async (req, res) => {
     }
 });
 
+// 1. Rota para Cadastrar Professor 👩‍🏫
+app.post('/api/novo-professor', async (req, res) => {
+    const { nome, email, senha } = req.body;
+    try {
+        await pool.query(
+            'INSERT INTO usuarios (nome, email, senha, perfil) VALUES ($1, $2, $3, $4)',
+            [nome, email, senha, 'professora']
+        );
+        res.json({ mensagem: 'Professor(a) cadastrado com sucesso!' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao cadastrar professor' });
+    }
+});
+
+// 2. Rota para Listar Professores (para o Select da Turma)
+app.get('/api/professores', async (req, res) => {
+    try {
+        const resultado = await pool.query("SELECT id, nome FROM usuarios WHERE perfil = 'professora'");
+        res.json(resultado.rows);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao buscar professores' });
+    }
+});
+
+// 3. Rota para Cadastrar Turma 🏫
+app.post('/api/nova-turma', async (req, res) => {
+    const { nome, professora_id } = req.body;
+    try {
+        await pool.query('INSERT INTO turmas (nome, professora_id) VALUES ($1, $2)', [nome, professora_id]);
+        res.json({ mensagem: 'Turma criada com sucesso!' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao criar turma' });
+    }
+});
+
+// 4. Rota para Relatório de Frequência (Dados para o PDF) 📄
+app.get('/api/relatorio-frequencia', async (req, res) => {
+    try {
+        const query = `
+            SELECT a.nome as aluno, t.nome as turma, r.tipo_movimento, r.data_hora
+            FROM registros_acesso r
+            JOIN alunos a ON r.aluno_id = a.id
+            JOIN turmas t ON a.turma_id = t.id
+            WHERE r.data_hora::date >= CURRENT_DATE - INTERVAL '30 days'
+            ORDER BY r.data_hora DESC
+        `;
+        const resultado = await pool.query(query);
+        res.json(resultado.rows);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao gerar dados do relatório' });
+    }
+});
+
+
 // O LUGAR CORRETO PARA O SERVIDOR LIGAR: BEM NO FINAL!
 server.listen(PORT, () => {
     console.log(`Servidor Atualizado rodando na porta ${PORT}`);
