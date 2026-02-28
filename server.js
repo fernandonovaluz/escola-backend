@@ -254,3 +254,39 @@ app.post('/api/novo-aluno', async (req, res) => {
 server.listen(PORT, () => {
     console.log(`Servidor Atualizado rodando na porta ${PORT}`);
 });
+
+// ==========================================
+// 🔐 ROTA DE LOGIN DO SISTEMA
+// ==========================================
+app.post('/api/login', async (req, res) => {
+    const { email, senha } = req.body;
+
+    if (!email || !senha) {
+        return res.status(400).json({ sucesso: false, mensagem: 'Preencha e-mail e senha.' });
+    }
+
+    try {
+        // Busca no banco um usuário com esse email e senha
+        const buscaUser = await pool.query(
+            'SELECT id, nome, email, perfil FROM usuarios WHERE email = $1 AND senha = $2',
+            [email, senha]
+        );
+
+        if (buscaUser.rows.length > 0) {
+            // Achou! Retorna os dados do usuário (menos a senha, por segurança)
+            res.json({ 
+                sucesso: true, 
+                usuario: buscaUser.rows[0] 
+            });
+        } else {
+            // Não achou (Senha ou email incorretos)
+            res.status(401).json({ 
+                sucesso: false, 
+                mensagem: 'E-mail ou senha incorretos!' 
+            });
+        }
+    } catch (erro) {
+        console.error('Erro no login:', erro);
+        res.status(500).json({ sucesso: false, mensagem: 'Erro interno no servidor.' });
+    }
+});
