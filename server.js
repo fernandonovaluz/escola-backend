@@ -16,8 +16,22 @@ const io = new Server(server, {
     cors: { origin: "*" } 
 });
 
+// ==========================================
+// 📻 RÁDIO COMUNICADOR (WEBSOCKET)
+// ==========================================
 io.on('connection', (socket) => {
     console.log('⚡ Cliente conectado no Socket:', socket.id);
+
+    // Professora avisa em qual sala ela quer entrar
+    socket.on('entrar_sala', (turma_id) => {
+        const nomeSala = 'turma_' + turma_id;
+        socket.join(nomeSala); 
+        console.log('👩‍🏫 Professora sintonizou na rádio da:', nomeSala);
+    });
+
+    socket.on('disconnect', () => {
+        console.log('❌ Dispositivo desconectado:', socket.id);
+    });
 });
 
 // ---------------------------------------------------------
@@ -37,7 +51,6 @@ app.get('/', (req, res) => {
 
 app.get('/api/alunos', async (req, res) => {
     try {
-        // O segredo está aqui: JOIN (juntar) a tabela alunos com responsaveis
         const query = `
             SELECT 
                 alunos.id,
@@ -75,7 +88,12 @@ app.post('/api/scan', async (req, res) => {
         if (buscaAluno.rows.length > 0) {
             const aluno = buscaAluno.rows[0];
             
-            // Aqui futuramente podemos salvar no banco o horário da entrada
+            // Megafone direcionado APENAS para a turma do aluno!
+            io.to('turma_' + aluno.turma_id).emit('atualizacao_sala', {
+                tipo: 'ENTRADA',
+                aluno: { nome: aluno.nome },
+                data_hora: new Date()
+            });
             
             return res.json({ 
                 status: 'sucesso', 
@@ -91,17 +109,21 @@ app.post('/api/scan', async (req, res) => {
         if (buscaPai.rows.length > 0) {
             const pai = buscaPai.rows[0];
             
-            // Vamos descobrir o nome do aluno que esse pai veio buscar para a mensagem ficar legal
-            const buscaFilho = await pool.query('SELECT nome FROM alunos WHERE id = $1', [pai.aluno_id]);
-            const nomeFilho = buscaFilho.rows[0].nome;
+            const buscaFilho = await pool.query('SELECT nome, turma_id FROM alunos WHERE id = $1', [pai.aluno_id]);
+            const filho = buscaFilho.rows[0];
 
-            // Aqui futuramente podemos salvar no banco o horário da saída
+            // Megafone direcionado APENAS para a turma do aluno!
+            io.to('turma_' + filho.turma_id).emit('atualizacao_sala', {
+                tipo: 'SAIDA',
+                aluno: { nome: filho.nome },
+                data_hora: new Date()
+            });
             
             return res.json({ 
                 status: 'sucesso', 
                 tipo: 'saida', 
-                mensagem: `${pai.nome} veio buscar ${nomeFilho}. Liberação autorizada!`,
-                aluno: nomeFilho,
+                mensagem: `${pai.nome} veio buscar ${filho.nome}. Liberação autorizada!`,
+                aluno: filho.nome,
                 responsavel: pai.nome
             });
         }
@@ -115,7 +137,7 @@ app.post('/api/scan', async (req, res) => {
     }
 });
 
-// 2. Rota Registrar Acesso (Portaria Inteligente)
+// 2. Rota Registrar Acesso (Rota Antiga de testes, pode ser mantida por segurança)
 app.post('/api/registrar-acesso', async (req, res) => {
     const { qr_code, tipo } = req.body; 
     console.log(`🔔 Leitura (${tipo}):`, qr_code);
@@ -125,7 +147,6 @@ app.post('/api/registrar-acesso', async (req, res) => {
         let mensagemLog = "";
         let nomeResponsavel = null;
 
-        // Busca se é Aluno
         const buscaAluno = await pool.query('SELECT * FROM alunos WHERE qr_code_hash = $1', [qr_code]);
         
         if (buscaAluno.rows.length > 0) {
@@ -134,7 +155,6 @@ app.post('/api/registrar-acesso', async (req, res) => {
                 ? `O aluno ${alunoAlvo.nome} ENTROU (Crachá Próprio).`
                 : `O aluno ${alunoAlvo.nome} SAIU (Crachá Próprio).`;
         } else {
-            // Busca se é Pai
             const buscaPai = await pool.query('SELECT * FROM responsaveis WHERE qr_code_hash = $1', [qr_code]);
             if (buscaPai.rows.length > 0) {
                 const pai = buscaPai.rows[0];
@@ -221,7 +241,7 @@ app.get('/api/dashboard', async (req, res) => {
     }
 });
 
-// 6. Rota NOVO ALUNO (Essa que estava faltando!) 📝
+// 6. Rota NOVO ALUNO 📝
 app.post('/api/novo-aluno', async (req, res) => {
     const { nome_aluno, turma_id, nome_pai, telefone_pai } = req.body;
     
@@ -229,14 +249,12 @@ app.post('/api/novo-aluno', async (req, res) => {
         const codeAluno = `ALUNO-${Math.floor(Math.random() * 100000)}`;
         const codePai = `PAI-${Math.floor(Math.random() * 100000)}`;
 
-        // Insere Aluno
         const novoAluno = await pool.query(
             `INSERT INTO alunos (nome, turma_id, qr_code_hash) VALUES ($1, $2, $3) RETURNING id`,
             [nome_aluno, turma_id, codeAluno]
         );
         const alunoId = novoAluno.rows[0].id;
 
-        // Insere Pai
         await pool.query(
             `INSERT INTO responsaveis (nome, parentesco, telefone, aluno_id, qr_code_hash) 
              VALUES ($1, 'Responsável', $2, $3, $4)`,
@@ -251,10 +269,6 @@ app.post('/api/novo-aluno', async (req, res) => {
     }
 });
 
-server.listen(PORT, () => {
-    console.log(`Servidor Atualizado rodando na porta ${PORT}`);
-});
-
 // ==========================================
 // 🔐 ROTA DE LOGIN DO SISTEMA
 // ==========================================
@@ -266,20 +280,17 @@ app.post('/api/login', async (req, res) => {
     }
 
     try {
-        // Busca no banco um usuário com esse email e senha
         const buscaUser = await pool.query(
             'SELECT id, nome, email, perfil FROM usuarios WHERE email = $1 AND senha = $2',
             [email, senha]
         );
 
         if (buscaUser.rows.length > 0) {
-            // Achou! Retorna os dados do usuário (menos a senha, por segurança)
             res.json({ 
                 sucesso: true, 
                 usuario: buscaUser.rows[0] 
             });
         } else {
-            // Não achou (Senha ou email incorretos)
             res.status(401).json({ 
                 sucesso: false, 
                 mensagem: 'E-mail ou senha incorretos!' 
@@ -289,4 +300,8 @@ app.post('/api/login', async (req, res) => {
         console.error('Erro no login:', erro);
         res.status(500).json({ sucesso: false, mensagem: 'Erro interno no servidor.' });
     }
+});
+
+server.listen(PORT, () => {
+    console.log(`Servidor Atualizado rodando na porta ${PORT}`);
 });
