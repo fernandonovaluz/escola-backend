@@ -22,11 +22,39 @@ const io = new Server(server, {
 io.on('connection', (socket) => {
     console.log('⚡ Cliente conectado no Socket:', socket.id);
 
-    // Professora avisa em qual sala ela quer entrar
+    // 1. Professora avisa em qual sala ela quer entrar
     socket.on('entrar_sala', (turma_id) => {
         const nomeSala = 'turma_' + turma_id;
         socket.join(nomeSala); 
         console.log('👩‍🏫 Professora sintonizou na rádio da:', nomeSala);
+    });
+
+    // 2. Portaria avisa que está online para receber as respostas das professoras
+    socket.on('entrar_portaria', () => {
+        socket.join('canal_portaria');
+        console.log('🚪 Portaria sintonizada no canal de respostas.');
+    });
+
+    // 👇 3. NOVO: Servidor escuta a resposta da Professora (Liberou ou Mandou esperar)
+    socket.on('resposta_liberacao', async (dados) => {
+        // dados esperados: { aluno_id, aluno_nome, responsavel_nome, status: 'liberado' ou 'esperar' }
+        console.log('👩‍🏫 Resposta da professora recebida:', dados);
+
+        try {
+            if (dados.status === 'liberado') {
+                // Se liberou, AGORA SIM nós salvamos a SAÍDA oficial no banco de dados!
+                await pool.query(
+                    'INSERT INTO registros_acesso (aluno_id, tipo_movimento) VALUES ($1, $2)', 
+                    [dados.aluno_id, 'SAIDA']
+                );
+            }
+
+            // Avisa a Portaria qual foi a decisão da professora
+            io.to('canal_portaria').emit('status_liberacao', dados);
+
+        } catch (erro) {
+            console.error('Erro ao processar liberação:', erro);
+        }
     });
 
     socket.on('disconnect', () => {
@@ -35,7 +63,7 @@ io.on('connection', (socket) => {
 });
 
 // ---------------------------------------------------------
-// ⚠️ CONEXÃO SUPABASE (Verifique se sua senha está correta aqui)
+// ⚠️ CONEXÃO SUPABASE
 // ---------------------------------------------------------
 const connectionString = process.env.DATABASE_URL; 
 
@@ -62,7 +90,6 @@ app.get('/api/alunos', async (req, res) => {
             FROM alunos
             LEFT JOIN responsaveis ON alunos.id = responsaveis.aluno_id
         `;
-
         const resultado = await pool.query(query);
         res.json(resultado.rows);
     } catch (erro) {
@@ -82,13 +109,16 @@ app.post('/api/scan', async (req, res) => {
     }
 
     try {
-        // 1. Tenta achar o QR Code na tabela de ALUNOS (Sinal de ENTRADA 🟢)
+        // 1. ENTRADA (Aluno) -> Continua igual, libera direto
         const buscaAluno = await pool.query('SELECT * FROM alunos WHERE qr_code_hash = $1', [qr_code]);
         
         if (buscaAluno.rows.length > 0) {
             const aluno = buscaAluno.rows[0];
             
-            // Megafone direcionado APENAS para a turma do aluno!
+            // Salva a entrada no banco
+            await pool.query('INSERT INTO registros_acesso (aluno_id, tipo_movimento) VALUES ($1, $2)', [aluno.id, 'ENTRADA']);
+            
+            // Avisa a professora que ele entrou
             io.to('turma_' + aluno.turma_id).emit('atualizacao_sala', {
                 tipo: 'ENTRADA',
                 aluno: { nome: aluno.nome },
@@ -103,32 +133,33 @@ app.post('/api/scan', async (req, res) => {
             });
         }
 
-        // 2. Tenta achar o QR Code na tabela de RESPONSÁVEIS (Sinal de SAÍDA 🟠)
+        // 👇 2. SAÍDA (Pai) -> MUDANÇA AQUI: Modo Bate-Volta!
         const buscaPai = await pool.query('SELECT * FROM responsaveis WHERE qr_code_hash = $1', [qr_code]);
         
         if (buscaPai.rows.length > 0) {
             const pai = buscaPai.rows[0];
-            
-            const buscaFilho = await pool.query('SELECT nome, turma_id FROM alunos WHERE id = $1', [pai.aluno_id]);
+            const buscaFilho = await pool.query('SELECT id, nome, turma_id FROM alunos WHERE id = $1', [pai.aluno_id]);
             const filho = buscaFilho.rows[0];
 
-            // Megafone direcionado APENAS para a turma do aluno!
-            io.to('turma_' + filho.turma_id).emit('atualizacao_sala', {
-                tipo: 'SAIDA',
-                aluno: { nome: filho.nome },
-                data_hora: new Date()
+            // AVISA A PROFESSORA QUE O PAI CHEGOU (Mas não salva no banco ainda)
+            io.to('turma_' + filho.turma_id).emit('solicitacao_saida', {
+                aluno_id: filho.id,
+                aluno_nome: filho.nome,
+                responsavel_nome: pai.nome
             });
             
+            // Devolve para a portaria o status de "AGUARDANDO"
             return res.json({ 
                 status: 'sucesso', 
-                tipo: 'saida', 
-                mensagem: `${pai.nome} veio buscar ${filho.nome}. Liberação autorizada!`,
+                tipo: 'aguardando', // NOVO STATUS!
+                mensagem: `${pai.nome} chegou. Aguardando professora liberar ${filho.nome}...`,
                 aluno: filho.nome,
+                aluno_id: filho.id,
                 responsavel: pai.nome
             });
         }
 
-        // 3. Se não achou em nenhuma das duas tabelas (QR Code Inválido 🔴)
+        // 3. QR Code Inválido
         return res.status(404).json({ erro: 'QR Code inválido ou não cadastrado no sistema.' });
 
     } catch (erro) {
@@ -137,61 +168,7 @@ app.post('/api/scan', async (req, res) => {
     }
 });
 
-// 2. Rota Registrar Acesso (Rota Antiga de testes, pode ser mantida por segurança)
-app.post('/api/registrar-acesso', async (req, res) => {
-    const { qr_code, tipo } = req.body; 
-    console.log(`🔔 Leitura (${tipo}):`, qr_code);
-    
-    try {
-        let alunoAlvo = null;
-        let mensagemLog = "";
-        let nomeResponsavel = null;
-
-        const buscaAluno = await pool.query('SELECT * FROM alunos WHERE qr_code_hash = $1', [qr_code]);
-        
-        if (buscaAluno.rows.length > 0) {
-            alunoAlvo = buscaAluno.rows[0];
-            mensagemLog = (tipo === 'ENTRADA') 
-                ? `O aluno ${alunoAlvo.nome} ENTROU (Crachá Próprio).`
-                : `O aluno ${alunoAlvo.nome} SAIU (Crachá Próprio).`;
-        } else {
-            const buscaPai = await pool.query('SELECT * FROM responsaveis WHERE qr_code_hash = $1', [qr_code]);
-            if (buscaPai.rows.length > 0) {
-                const pai = buscaPai.rows[0];
-                nomeResponsavel = pai.nome;
-                const buscaFilho = await pool.query('SELECT * FROM alunos WHERE id = $1', [pai.aluno_id]);
-                if (buscaFilho.rows.length > 0) {
-                    alunoAlvo = buscaFilho.rows[0];
-                    mensagemLog = (tipo === 'ENTRADA')
-                        ? `O aluno ${alunoAlvo.nome} ENTROU com ${pai.nome}.`
-                        : `SAÍDA: ${alunoAlvo.nome} buscado por ${pai.nome} (${pai.parentesco}).`;
-                }
-            }
-        }
-
-        if (alunoAlvo) {
-            await pool.query('INSERT INTO registros_acesso (aluno_id, tipo_movimento) VALUES ($1, $2)', [alunoAlvo.id, tipo]);
-
-            io.emit('atualizacao_sala', { 
-                mensagem: mensagemLog,
-                tipo: tipo,
-                aluno: alunoAlvo,
-                responsavel: nomeResponsavel,
-                horario: new Date()
-            });
-
-            return res.json({ mensagem: 'Acesso Autorizado!', detalhe: mensagemLog, aluno: alunoAlvo.nome });
-        } 
-        
-        return res.status(404).json({ mensagem: 'QR Code Desconhecido!' });
-
-    } catch (erro) {
-        console.error(erro);
-        res.status(500).json({ erro: 'Erro no servidor' });
-    }
-});
-
-// 3. Rota Histórico do Dia
+// Rota Histórico do Dia
 app.get('/api/historico', async (req, res) => {
     try {
         const resultado = await pool.query(
@@ -207,7 +184,7 @@ app.get('/api/historico', async (req, res) => {
     }
 });
 
-// 4. Rota Agenda (Completa) 📅
+// Rota Agenda (Completa) 📅
 app.post('/api/agenda', async (req, res) => {
     const { turma_id, atividade, para_casa, recado_geral } = req.body;
     try {
@@ -224,7 +201,7 @@ app.post('/api/agenda', async (req, res) => {
     }
 });
 
-// 5. Rota Dashboard 📊
+// Rota Dashboard 📊
 app.get('/api/dashboard', async (req, res) => {
     try {
         const totalAlunos = await pool.query('SELECT COUNT(*) FROM alunos');
@@ -241,7 +218,7 @@ app.get('/api/dashboard', async (req, res) => {
     }
 });
 
-// 6. Rota NOVO ALUNO 📝
+// Rota NOVO ALUNO 📝
 app.post('/api/novo-aluno', async (req, res) => {
     const { nome_aluno, turma_id, nome_pai, telefone_pai } = req.body;
     
