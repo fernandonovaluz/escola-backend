@@ -79,16 +79,21 @@ app.get('/', (req, res) => {
 
 app.get('/api/alunos', async (req, res) => {
     try {
+        // O segredo do ERP: Cruzando 4 tabelas ao mesmo tempo!
         const query = `
             SELECT 
-                alunos.id,
-                alunos.nome,
-                alunos.turma_id,
-                alunos.qr_code_hash as qr_code,
-                responsaveis.nome as nome_responsavel,
-                responsaveis.qr_code_hash as qr_pai
-            FROM alunos
-            LEFT JOIN responsaveis ON alunos.id = responsaveis.aluno_id
+                a.id,
+                a.nome,
+                COALESCE(t.nome, 'Sem Turma') as nome_turma,
+                COALESCE(u.nome, 'Sem Prof') as nome_professora,
+                a.qr_code_hash as qr_code,
+                r.nome as nome_responsavel,
+                r.qr_code_hash as qr_pai
+            FROM alunos a
+            LEFT JOIN responsaveis r ON a.id = r.aluno_id
+            LEFT JOIN turmas t ON a.turma_id = t.id
+            LEFT JOIN usuarios u ON t.professora_id = u.id
+            ORDER BY a.nome ASC
         `;
         const resultado = await pool.query(query);
         res.json(resultado.rows);
@@ -282,4 +287,33 @@ app.post('/api/login', async (req, res) => {
 
 server.listen(PORT, () => {
     console.log(`Servidor Atualizado rodando na porta ${PORT}`);
+});
+
+// ==========================================
+// 📚 ROTA DE ACOMPANHAMENTO PEDAGÓGICO (DIRETORIA)
+// ==========================================
+app.get('/api/planejamentos', async (req, res) => {
+    try {
+        const query = `
+            SELECT 
+                a.id, 
+                a.data_agenda,
+                a.planejamento, 
+                a.atividade, 
+                a.para_casa, 
+                a.recado_geral,
+                t.nome as nome_turma, 
+                u.nome as nome_professora
+            FROM agenda_diaria a
+            JOIN turmas t ON a.turma_id = t.id
+            JOIN usuarios u ON t.professora_id = u.id
+            ORDER BY a.data_agenda DESC, t.nome ASC
+            LIMIT 50
+        `;
+        const resultado = await pool.query(query);
+        res.json(resultado.rows);
+    } catch (erro) {
+        console.error('Erro ao buscar planejamentos:', erro);
+        res.status(500).json({ erro: 'Erro interno' });
+    }
 });
