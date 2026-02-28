@@ -184,20 +184,21 @@ app.get('/api/historico', async (req, res) => {
     }
 });
 
-// Rota Agenda (Completa) 📅
+// 4. Rota Planejamento e Agenda 📅
 app.post('/api/agenda', async (req, res) => {
-    const { turma_id, atividade, para_casa, recado_geral } = req.body;
+    // Agora recebemos a data_agenda e o planejamento!
+    const { turma_id, planejamento, atividade, para_casa, recado_geral, data_agenda } = req.body;
     try {
         await pool.query(
-            `INSERT INTO agenda_diaria (turma_id, atividade, para_casa, recado_geral) 
-             VALUES ($1, $2, $3, $4)`,
-            [turma_id, atividade, para_casa, recado_geral]
+            `INSERT INTO agenda_diaria (turma_id, planejamento, atividade, para_casa, recado_geral, data_agenda) 
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [turma_id, planejamento, atividade, para_casa, recado_geral, data_agenda]
         );
-        io.emit('nova_agenda', { mensagem: 'Agenda atualizada!' });
-        res.json({ mensagem: 'Agenda salva!' });
+        io.emit('nova_agenda', { mensagem: 'Planejamento salvo!' });
+        res.json({ mensagem: 'Planejamento e Agenda salvos com sucesso!' });
     } catch (erro) {
-        console.error(erro);
-        res.status(500).json({ erro: 'Erro ao salvar agenda' });
+        console.error('Erro ao salvar planejamento:', erro);
+        res.status(500).json({ erro: 'Erro ao salvar planejamento' });
     }
 });
 
