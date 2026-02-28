@@ -35,23 +35,18 @@ io.on('connection', (socket) => {
         console.log('🚪 Portaria sintonizada no canal de respostas.');
     });
 
-    // 👇 3. NOVO: Servidor escuta a resposta da Professora (Liberou ou Mandou esperar)
+    // 3. Servidor escuta a resposta da Professora (Liberou ou Mandou esperar)
     socket.on('resposta_liberacao', async (dados) => {
-        // dados esperados: { aluno_id, aluno_nome, responsavel_nome, status: 'liberado' ou 'esperar' }
         console.log('👩‍🏫 Resposta da professora recebida:', dados);
 
         try {
             if (dados.status === 'liberado') {
-                // Se liberou, AGORA SIM nós salvamos a SAÍDA oficial no banco de dados!
                 await pool.query(
                     'INSERT INTO registros_acesso (aluno_id, tipo_movimento) VALUES ($1, $2)', 
                     [dados.aluno_id, 'SAIDA']
                 );
             }
-
-            // Avisa a Portaria qual foi a decisão da professora
             io.to('canal_portaria').emit('status_liberacao', dados);
-
         } catch (erro) {
             console.error('Erro ao processar liberação:', erro);
         }
@@ -79,7 +74,6 @@ app.get('/', (req, res) => {
 
 app.get('/api/alunos', async (req, res) => {
     try {
-        // O segredo do ERP: Cruzando 4 tabelas ao mesmo tempo!
         const query = `
             SELECT 
                 a.id,
@@ -119,11 +113,8 @@ app.post('/api/scan', async (req, res) => {
         
         if (buscaAluno.rows.length > 0) {
             const aluno = buscaAluno.rows[0];
-            
-            // Salva a entrada no banco
             await pool.query('INSERT INTO registros_acesso (aluno_id, tipo_movimento) VALUES ($1, $2)', [aluno.id, 'ENTRADA']);
             
-            // Avisa a professora que ele entrou
             io.to('turma_' + aluno.turma_id).emit('atualizacao_sala', {
                 tipo: 'ENTRADA',
                 aluno: { nome: aluno.nome },
@@ -138,7 +129,7 @@ app.post('/api/scan', async (req, res) => {
             });
         }
 
-        // 👇 2. SAÍDA (Pai) -> MUDANÇA AQUI: Modo Bate-Volta!
+        // 2. SAÍDA (Pai) -> Modo Bate-Volta!
         const buscaPai = await pool.query('SELECT * FROM responsaveis WHERE qr_code_hash = $1', [qr_code]);
         
         if (buscaPai.rows.length > 0) {
@@ -146,17 +137,15 @@ app.post('/api/scan', async (req, res) => {
             const buscaFilho = await pool.query('SELECT id, nome, turma_id FROM alunos WHERE id = $1', [pai.aluno_id]);
             const filho = buscaFilho.rows[0];
 
-            // AVISA A PROFESSORA QUE O PAI CHEGOU (Mas não salva no banco ainda)
             io.to('turma_' + filho.turma_id).emit('solicitacao_saida', {
                 aluno_id: filho.id,
                 aluno_nome: filho.nome,
                 responsavel_nome: pai.nome
             });
             
-            // Devolve para a portaria o status de "AGUARDANDO"
             return res.json({ 
                 status: 'sucesso', 
-                tipo: 'aguardando', // NOVO STATUS!
+                tipo: 'aguardando',
                 mensagem: `${pai.nome} chegou. Aguardando professora liberar ${filho.nome}...`,
                 aluno: filho.nome,
                 aluno_id: filho.id,
@@ -164,7 +153,6 @@ app.post('/api/scan', async (req, res) => {
             });
         }
 
-        // 3. QR Code Inválido
         return res.status(404).json({ erro: 'QR Code inválido ou não cadastrado no sistema.' });
 
     } catch (erro) {
@@ -191,7 +179,6 @@ app.get('/api/historico', async (req, res) => {
 
 // 4. Rota Planejamento e Agenda 📅
 app.post('/api/agenda', async (req, res) => {
-    // Agora recebemos a data_agenda e o planejamento!
     const { turma_id, planejamento, atividade, para_casa, recado_geral, data_agenda } = req.body;
     try {
         await pool.query(
@@ -207,19 +194,38 @@ app.post('/api/agenda', async (req, res) => {
     }
 });
 
-// Rota Dashboard 📊
+// ==========================================
+// 📊 ROTA DASHBOARD (VERSÃO SUPER DASHBOARD CORRIGIDA)
+// ==========================================
 app.get('/api/dashboard', async (req, res) => {
     try {
-        const totalAlunos = await pool.query('SELECT COUNT(*) FROM alunos');
-        const presentesHoje = await pool.query(
+        const totalAlunosQuery = await pool.query('SELECT COUNT(*) FROM alunos');
+        const totalAlunos = parseInt(totalAlunosQuery.rows[0].count);
+
+        const presentesHojeQuery = await pool.query(
             `SELECT COUNT(DISTINCT aluno_id) FROM registros_acesso 
              WHERE tipo_movimento = 'ENTRADA' AND data_hora::date = CURRENT_DATE`
         );
+        const presentesHoje = parseInt(presentesHojeQuery.rows[0].count);
+        
+        const ausentes = totalAlunos - presentesHoje;
+
+        const ultimosAcessosQuery = await pool.query(
+            `SELECT a.nome, r.tipo_movimento, r.data_hora 
+             FROM registros_acesso r
+             JOIN alunos a ON r.aluno_id = a.id
+             WHERE r.data_hora::date = CURRENT_DATE
+             ORDER BY r.data_hora DESC LIMIT 5`
+        );
+
         res.json({
-            total_alunos: totalAlunos.rows[0].count,
-            presentes_hoje: presentesHoje.rows[0].count
+            total_alunos: totalAlunos,
+            presentes_hoje: presentesHoje,
+            ausentes: ausentes,
+            ultimos_acessos: ultimosAcessosQuery.rows
         });
     } catch (erro) {
+        console.error('Erro dashboard:', erro);
         res.status(500).json({ erro: 'Erro dashboard' });
     }
 });
@@ -285,10 +291,6 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
-server.listen(PORT, () => {
-    console.log(`Servidor Atualizado rodando na porta ${PORT}`);
-});
-
 // ==========================================
 // 📚 ROTA DE ACOMPANHAMENTO PEDAGÓGICO (DIRETORIA)
 // ==========================================
@@ -316,4 +318,9 @@ app.get('/api/planejamentos', async (req, res) => {
         console.error('Erro ao buscar planejamentos:', erro);
         res.status(500).json({ erro: 'Erro interno' });
     }
+});
+
+// O LUGAR CORRETO PARA O SERVIDOR LIGAR: BEM NO FINAL!
+server.listen(PORT, () => {
+    console.log(`Servidor Atualizado rodando na porta ${PORT}`);
 });
