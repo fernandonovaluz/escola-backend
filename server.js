@@ -257,7 +257,7 @@ app.put('/api/alunos/:id', async (req, res) => {
 });
 
 // ==========================================
-// 🔐 LOGIN DO SISTEMA
+// 🔐 LOGIN DO SISTEMA (AGORA INTELIGENTE)
 // ==========================================
 app.post('/api/login', async (req, res) => {
     const { email, senha } = req.body;
@@ -265,14 +265,26 @@ app.post('/api/login', async (req, res) => {
 
     try {
         const buscaUser = await pool.query('SELECT id, nome, email, perfil FROM usuarios WHERE email = $1 AND senha = $2', [email, senha]);
+        
         if (buscaUser.rows.length > 0) {
-            res.json({ sucesso: true, usuario: buscaUser.rows[0] });
+            const usuario = buscaUser.rows[0];
+            let turma_id = null;
+
+            // 👇 A MÁGICA AQUI: Se for professora, descobre qual é a sala dela!
+            if (usuario.perfil === 'professora') {
+                const buscaTurma = await pool.query('SELECT id FROM turmas WHERE professora_id = $1 LIMIT 1', [usuario.id]);
+                if (buscaTurma.rows.length > 0) {
+                    turma_id = buscaTurma.rows[0].id;
+                }
+            }
+
+            // Devolve o usuário e o número da turma (se tiver)
+            res.json({ sucesso: true, usuario: { ...usuario, turma_id: turma_id } });
         } else {
             res.status(401).json({ sucesso: false, mensagem: 'E-mail ou senha incorretos!' });
         }
-    } catch (erro) { res.status(500).json({ sucesso: false, mensagem: 'Erro interno no servidor.' }); }
-});
-
-server.listen(PORT, () => {
-    console.log(`Servidor Atualizado rodando na porta ${PORT}`);
+    } catch (erro) { 
+        console.error('Erro no login:', erro);
+        res.status(500).json({ sucesso: false, mensagem: 'Erro interno no servidor.' }); 
+    }
 });
