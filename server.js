@@ -5,7 +5,6 @@ const http = require('http');
 const { Server } = require("socket.io"); 
 
 const app = express();
-const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
@@ -287,4 +286,23 @@ app.post('/api/login', async (req, res) => {
         console.error('Erro no login:', erro);
         res.status(500).json({ sucesso: false, mensagem: 'Erro interno no servidor.' }); 
     }
+});
+
+// ==========================================
+// 🚀 LIGANDO O SERVIDOR NA TOMADA (RENDER)
+// ==========================================
+const PORTA = process.env.PORT || 3000;
+
+// O '0.0.0.0' garante que o Render consiga conectar na sua porta!
+server.listen(PORTA, '0.0.0.0', () => {
+    console.log(`✅ Servidor SaaS Ligado com Sucesso na porta ${PORTA}!`);
+});
+
+// 🛡️ ESPIÕES DE ERROS SILENCIOSOS (Opcional, mas muito bom ter)
+process.on('uncaughtException', (err) => {
+    console.error('🚨 ERRO CRÍTICO:', err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('🚨 PROMESSA REJEITADA:', reason);
 });
