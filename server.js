@@ -132,6 +132,49 @@ app.put('/api/alunos/:id', async (req, res) => {
 });
 
 // ==========================================
+// 📚 MÓDULO DE LISTAS SUSPENSAS (V2.1)
+// ==========================================
+app.get('/api/materiais', async (req, res) => {
+    try { res.json((await pool.query('SELECT * FROM materiais ORDER BY nome ASC')).rows); } 
+    catch (e) { res.status(500).json({ erro: 'Erro' }); }
+});
+
+app.get('/api/atividades', async (req, res) => {
+    try { res.json((await pool.query('SELECT * FROM atividades ORDER BY nome ASC')).rows); } 
+    catch (e) { res.status(500).json({ erro: 'Erro' }); }
+});
+
+app.get('/api/bncc', async (req, res) => {
+    try { res.json((await pool.query('SELECT * FROM bncc ORDER BY codigo ASC')).rows); } 
+    catch (e) { res.status(500).json({ erro: 'Erro' }); }
+});
+
+app.post('/api/atividades', async (req, res) => {
+    // Para quando a professora quiser salvar uma atividade nova no futuro
+    try { 
+        await pool.query('INSERT INTO atividades (nome) VALUES ($1)', [req.body.nome]);
+        res.json({ mensagem: 'Salvo' });
+    } catch (e) { res.status(500).json({ erro: 'Erro' }); }
+});
+
+// Rota para a Diretora cadastrar novo Material Didático
+app.post('/api/materiais', async (req, res) => {
+    try { 
+        await pool.query('INSERT INTO materiais (nome) VALUES ($1)', [req.body.nome]);
+        res.json({ mensagem: 'Material cadastrado com sucesso!' });
+    } catch (e) { res.status(500).json({ erro: 'Erro ao salvar material' }); }
+});
+
+// Rota para a Diretora cadastrar novo código BNCC
+app.post('/api/bncc', async (req, res) => {
+    try { 
+        await pool.query('INSERT INTO bncc (codigo, descricao) VALUES ($1, $2)', [req.body.codigo, req.body.descricao]);
+        res.json({ mensagem: 'Competência BNCC cadastrada!' });
+    } catch (e) { res.status(500).json({ erro: 'Erro ao salvar BNCC' }); }
+});
+
+
+// ==========================================
 // 🔐 LOGIN V2 (MÚLTIPLAS TURMAS)
 // ==========================================
 app.post('/api/login', async (req, res) => {
