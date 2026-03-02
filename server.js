@@ -102,17 +102,19 @@ app.get('/api/planejamentos', async (req, res) => {
 });
 
 // ==========================================
-// 👨‍👩‍👦 NOVO: PORTAL DOS PAIS (ACESSO VIA QR CODE)
+// 👨‍👩‍👦 NOVO: PORTAL DOS PAIS (COM FILTRO DE DATA)
 // ==========================================
-app.get('/api/agenda-pais/:aluno_id', async (req, res) => {
+app.get('/api/agenda-pais/:aluno_id/:data', async (req, res) => {
     try {
+        // 1. Acha quem é o aluno
         const buscaAluno = await pool.query('SELECT turma_id, nome FROM alunos WHERE id = $1', [req.params.aluno_id]);
         if(buscaAluno.rows.length === 0) return res.status(404).json({ erro: 'Aluno não encontrado' });
         
-        // Só puxa a agenda de HOJE e que esteja PUBLICADA
-        const buscaAgenda = await pool.query(`SELECT atividade, para_casa, recado_geral FROM agenda_diaria WHERE turma_id = $1 AND data_agenda = CURRENT_DATE AND status = 'publicado'`, [buscaAluno.rows[0].turma_id]);
+        // 2. Busca a agenda DAQUELA DATA específica (e só se estiver publicada)
+        const buscaAgenda = await pool.query(`SELECT atividade, para_casa, recado_geral FROM agenda_diaria WHERE turma_id = $1 AND data_agenda = $2 AND status = 'publicado'`, [buscaAluno.rows[0].turma_id, req.params.data]);
         
-        if(buscaAgenda.rows.length === 0) return res.json({ publicada: false, mensagem: 'Nenhuma agenda publicada para hoje ainda.' });
+        if(buscaAgenda.rows.length === 0) return res.json({ publicada: false, mensagem: 'Nenhuma agenda publicada para este dia específico.' });
+        
         res.json({ publicada: true, aluno: buscaAluno.rows[0].nome, agenda: buscaAgenda.rows[0] });
     } catch (erro) { res.status(500).json({ erro: 'Erro ao buscar' }); }
 });
